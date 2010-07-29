@@ -2,6 +2,7 @@
 require 'socket' unless defined?(Socket)
 require 'yajl' unless defined?(Yajl::Parser)
 require 'uri' unless defined?(URI)
+require 'openssl' unless defined?(OpenSSL)
 
 module Yajl
   # This module is for making HTTP requests to which the response bodies (and possibly requests in the near future)
@@ -98,7 +99,20 @@ module Yajl
           end
         end
 
-        socket = opts.has_key?(:socket) ? opts.delete(:socket) : TCPSocket.new(uri.host, uri.port)
+        if opts.has_key?(:socket)
+          socket = opts.delete(:socket)
+        else
+          sock = TCPSocket.new(uri.host, uri.port)
+      		if uri.port == 443
+        		ssl_context = OpenSSL::SSL::SSLContext.new
+        		socket = OpenSSL::SSL::SSLSocket.new(sock, ssl_context)
+        		socket.sync_close = true
+        		socket.connect
+      		else
+        		socket = sock
+      		end
+      	end
+
         request = "#{method} #{uri.path}#{uri.query ? "?"+uri.query : nil} HTTP/1.1\r\n"
         request << "Host: #{uri.host}\r\n"
         request << "Authorization: Basic #{[uri.userinfo].pack('m').strip!}\r\n" unless uri.userinfo.nil?
@@ -148,7 +162,7 @@ module Yajl
           if block_given?
             chunkLeft = 0
             while !socket.eof? && (line = socket.gets)
-              break if line.match /^0.*?\r\n/
+              break if line.match /0.*?\r\n/
               next if line == "\r\n"
               size = line.hex
               json = socket.read(size)
@@ -189,7 +203,15 @@ module Yajl
   private
     # Initialize socket and add it to the opts
     def initialize_socket(uri, opts = {})
-      @socket = TCPSocket.new(uri.host, uri.port)
+      sock = TCPSocket.new(uri.host, uri.port)
+      if uri.port == 443
+        ssl_context = OpenSSL::SSL::SSLContext.new
+        @socket = OpenSSL::SSL::SSLSocket.new(sock, ssl_context)
+        @socket.sync_close = true
+        @socket.connect
+      else
+        @socket = sock
+      end
       opts.merge!({:socket => @socket})
       @intentional_termination = false
     end
